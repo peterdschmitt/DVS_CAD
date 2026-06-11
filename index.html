@@ -649,17 +649,13 @@ async function generate(){
   genBtn.disabled=true; spin.style.display='block';
   setMsg('Generating geometry…','');
   try{
-    const res = await fetch('https://api.anthropic.com/v1/messages',{
+    const res = await fetch('/api/generate',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        model:'claude-sonnet-4-20250514', max_tokens:1000,
-        system: SYS,
-        messages:[{role:'user', content: prompt}]
-      })
+      body: JSON.stringify({ prompt, system: SYS })
     });
     const data = await res.json();
-    if(data.error) throw new Error(data.error.message||'API error');
-    const text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+    if(data.error) throw new Error(data.error||'API error');
+    const text = data.text || '';
     const clean = text.replace(/```json|```/g,'').trim();
     const spec = JSON.parse(clean.slice(clean.indexOf('{')));
     if(!spec.parts || !spec.parts.length) throw new Error('No parts in response');
