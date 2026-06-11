@@ -55,7 +55,7 @@
   .empty{color:var(--faint);font-size:11px;padding:14px 10px;text-align:center;line-height:1.6}
 
   .vp{position:relative;min-width:0;min-height:0;background:#101216}
-  #cv{display:block;width:100%;height:100%}
+  #cv{display:block;width:100%;height:100%;touch-action:none}
   .hud{position:absolute;top:10px;left:12px;font-family:var(--mono);font-size:10px;color:var(--faint);pointer-events:none;line-height:1.7}
   .hud b{color:var(--dim);font-weight:400}
   .axes{position:absolute;bottom:78px;right:14px;font-family:var(--mono);font-size:10px;color:var(--faint);pointer-events:none}
@@ -87,21 +87,45 @@
   .opToggle{display:flex;gap:5px}
   .opToggle .btn{flex:1;font-size:11px;padding:5px 0}
   .opToggle .btn.on{background:var(--acc);border-color:var(--acc);color:#16181c;font-weight:600}
+
+  .menuBtn{display:none}
+  .backdrop{position:fixed;inset:44px 0 0 0;background:rgba(0,0,0,.5);z-index:25;display:none}
+  .backdrop.show{display:block}
+  @media (max-width:768px){
+    .main{grid-template-columns:1fr}
+    .side{position:fixed;top:44px;bottom:0;left:0;width:min(300px,84vw);z-index:30;
+      transform:translateX(-105%);transition:transform .22s ease;box-shadow:8px 0 30px rgba(0,0,0,.5)}
+    .side.right{left:auto;right:0;transform:translateX(105%);box-shadow:-8px 0 30px rgba(0,0,0,.5)}
+    .side.open{transform:translateX(0)}
+    .menuBtn{display:inline-block;padding:6px 10px}
+    .bar{gap:8px;padding:0 10px}
+    .bar .tag{display:none}
+    .bar .btn:not(.menuBtn):not(.primary){display:none}
+    .hud{font-size:9px;line-height:1.5}
+    .axes{display:none}
+    .cmd{bottom:10px;width:94%}
+    .cmdbox{padding:8px 10px}
+    .prim{padding:10px 4px}
+    .node{padding:9px 8px}
+  }
 </style>
 </head>
 <body>
 <div class="app">
   <div class="bar">
+    <button class="btn menuBtn" id="leftBtn" aria-label="Parts panel">☰</button>
     <div class="logo">DVS<b>_</b>CAD</div>
     <span class="tag">AI TEXT-TO-CAD · BOOLEAN ENGINE · mm · Y-UP</span>
     <div class="spacer"></div>
     <button class="btn toggle on" id="ghostBtn">Show cutters</button>
     <button class="btn" id="clearBtn">Clear scene</button>
     <button class="btn primary" id="stlBtn">Export STL</button>
+    <button class="btn menuBtn" id="inspBtn" aria-label="Inspector panel">Edit</button>
   </div>
 
   <div class="main">
-    <div class="side">
+    <div class="backdrop" id="backdrop"></div>
+    <div class="side" id="leftPanel">
       <div class="sec">
         <h3>Solids</h3>
         <div class="prims">
@@ -129,7 +153,7 @@
     <div class="vp" id="vpEl">
       <canvas id="cv"></canvas>
       <div class="hud">
-        <b>DRAG</b> orbit &nbsp; <b>WHEEL</b> zoom &nbsp; <b>SHIFT+DRAG</b> pan &nbsp; <b>CLICK</b> select<br>
+        <span id="hudHints"><b>DRAG</b> orbit &nbsp; <b>WHEEL</b> zoom &nbsp; <b>SHIFT+DRAG</b> pan &nbsp; <b>CLICK</b> select</span><br>
         <span id="hudStats">parts 0 · tris 0</span>
       </div>
       <div class="axes">X<span style="color:#e25555">—</span> Y<span style="color:#5fd38a">—</span> Z<span style="color:#5b9bd5">—</span></div>
@@ -144,7 +168,7 @@
       </div>
     </div>
 
-    <div class="side right">
+    <div class="side right" id="rightPanel">
       <div class="sec" style="flex:1;overflow-y:auto">
         <h3>Inspector</h3>
         <div class="insp" id="insp"><div class="none">Select a part to edit its dimensions, position and material.</div></div>
@@ -341,28 +365,77 @@ function applyCam(){
     t.z + ctrl.dist*Math.sin(ctrl.phi)*Math.sin(ctrl.theta));
   camera.lookAt(t);
 }
-let drag = null;
+let drag = null, pinch = null;
+const pointers = new Map();
+function panCam(dx, dy){
+  const sc = ctrl.dist*0.0012;
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix,0);
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
+  ctrl.target.addScaledVector(right,-dx*sc).addScaledVector(up,dy*sc);
+}
 cv.addEventListener('pointerdown', e => {
-  drag = {x:e.clientX, y:e.clientY, pan: e.shiftKey || e.button===2, moved:false};
+  pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
   cv.setPointerCapture(e.pointerId);
+  if(pointers.size === 1){
+    drag = {x:e.clientX, y:e.clientY, pan: e.shiftKey || e.button===2, moved:false};
+  } else if(pointers.size === 2){
+    drag = null;
+    const [a,b] = [...pointers.values()];
+    pinch = {d: Math.hypot(a.x-b.x, a.y-b.y), mx:(a.x+b.x)/2, my:(a.y+b.y)/2};
+  }
 });
 cv.addEventListener('pointermove', e => {
+  if(!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  if(pinch && pointers.size === 2){
+    const [a,b] = [...pointers.values()];
+    const d = Math.hypot(a.x-b.x, a.y-b.y);
+    const mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
+    if(d > 0 && pinch.d > 0) ctrl.dist = Math.min(2200, Math.max(25, ctrl.dist * pinch.d / d));
+    panCam(mx - pinch.mx, my - pinch.my);
+    pinch = {d, mx, my};
+    applyCam();
+    return;
+  }
   if(!drag) return;
   const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
   if(Math.abs(dx)+Math.abs(dy)>3) drag.moved = true;
   drag.x=e.clientX; drag.y=e.clientY;
-  if(drag.pan){
-    const sc = ctrl.dist*0.0012;
-    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix,0);
-    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
-    ctrl.target.addScaledVector(right,-dx*sc).addScaledVector(up,dy*sc);
-  } else {
+  if(drag.pan){ panCam(dx,dy); }
+  else {
     ctrl.theta += dx*0.0055;
     ctrl.phi = Math.min(Math.PI-0.06, Math.max(0.06, ctrl.phi - dy*0.0055));
   }
   applyCam();
 });
-cv.addEventListener('pointerup', e => { if(drag && !drag.moved && e.button===0) pick(e); drag=null; });
+function endPointer(e){
+  if(drag && !drag.moved && e.type==='pointerup' && e.button===0 && pointers.size===1) pick(e);
+  pointers.delete(e.pointerId);
+  if(pointers.size < 2) pinch = null;
+  if(pointers.size === 0) drag = null;
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+
+/* mobile drawers */
+const leftPanel = document.getElementById('leftPanel'),
+      rightPanel = document.getElementById('rightPanel'),
+      backdrop = document.getElementById('backdrop');
+function closeDrawers(){ leftPanel.classList.remove('open'); rightPanel.classList.remove('open'); backdrop.classList.remove('show'); }
+document.getElementById('leftBtn').onclick = ()=>{
+  rightPanel.classList.remove('open');
+  const o = leftPanel.classList.toggle('open');
+  backdrop.classList.toggle('show', o);
+};
+document.getElementById('inspBtn').onclick = ()=>{
+  leftPanel.classList.remove('open');
+  const o = rightPanel.classList.toggle('open');
+  backdrop.classList.toggle('show', o);
+};
+backdrop.onclick = closeDrawers;
+if(matchMedia('(pointer:coarse)').matches){
+  document.getElementById('hudHints').innerHTML = '<b>DRAG</b> orbit &nbsp; <b>PINCH</b> zoom &nbsp; <b>2-FINGER</b> pan &nbsp; <b>TAP</b> select';
+}
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   ctrl.dist = Math.min(2200, Math.max(25, ctrl.dist*(e.deltaY>0?1.1:0.9)));
