@@ -128,6 +128,7 @@
     <div class="logo">DVS<b>_</b>CAD</div>
     <span class="tag">AI TEXT-TO-CAD · BOOLEAN ENGINE · mm · Y-UP</span>
     <div class="spacer"></div>
+    <button class="btn" id="unitBtn" title="Toggle units">mm</button>
     <button class="btn toggle on" id="ghostBtn">Show cutters</button>
     <button class="btn" id="clearBtn">Clear scene</button>
     <button class="btn primary" id="stlBtn">Export STL</button>
@@ -160,6 +161,7 @@
         <div style="display:flex;gap:6px">
           <button class="btn toggle on" id="ghostBtnM" style="flex:1;font-size:11px">Show cutters</button>
           <button class="btn" id="clearBtnM" style="flex:1;font-size:11px">Clear scene</button>
+          <button class="btn" id="unitBtnM" style="flex:1;font-size:11px">mm</button>
         </div>
       </div>
       <div class="sec" style="border-bottom:none;display:flex;flex-direction:column;flex:1;min-height:0">
@@ -465,6 +467,33 @@ cv.addEventListener('contextmenu', e=>e.preventDefault());
 /* ============ parts model ============ */
 /* part = {id, name, type, op:'solid'|'cut', params, mesh, color} */
 let parts = [], selected = null, uid = 1, showGhosts = true;
+let unit = 'mm';
+const MATERIALS = {
+  steel:{c:'#8a93a6',m:.6,r:.35,d:7.85}, stainless:{c:'#c0c5ce',m:.8,r:.25,d:7.90},
+  aluminum:{c:'#d4d8de',m:.7,r:.30,d:2.70}, brass:{c:'#c9a14b',m:.9,r:.30,d:8.50},
+  copper:{c:'#c87a4f',m:.9,r:.35,d:8.96}, titanium:{c:'#9aa0a8',m:.7,r:.40,d:4.43},
+  cast_iron:{c:'#6e7682',m:.5,r:.60,d:7.20}, abs:{c:'#4a90d9',m:0,r:.60,d:1.04},
+  pla:{c:'#e05c4a',m:0,r:.55,d:1.24}, nylon:{c:'#e8e4da',m:0,r:.50,d:1.14},
+  acrylic:{c:'#9fd6e8',m:.1,r:.15,d:1.18}, oak:{c:'#a8702e',m:0,r:.80,d:0.75},
+};
+function fmtL(mm){ return unit==='mm' ? Math.round(mm*10)/10+'mm' : Math.round(mm/25.4*100)/100+'in'; }
+function fmtM(g){
+  if(unit==='mm') return g>=1000 ? Math.round(g/10)/100+' kg' : Math.round(g*10)/10+' g';
+  const oz = g/28.3495;
+  return oz>=16 ? Math.round(g/453.592*100)/100+' lb' : Math.round(oz*10)/10+' oz';
+}
+function geomVolume(g){
+  const pos=g.attributes.position, idx=g.index;
+  const a=new THREE.Vector3(), b=new THREE.Vector3(), c=new THREE.Vector3();
+  let v=0; const n = idx ? idx.count/3 : pos.count/3;
+  for(let t=0;t<n;t++){
+    const i0=idx?idx.getX(t*3):t*3, i1=idx?idx.getX(t*3+1):t*3+1, i2=idx?idx.getX(t*3+2):t*3+2;
+    a.fromBufferAttribute(pos,i0); b.fromBufferAttribute(pos,i1); c.fromBufferAttribute(pos,i2);
+    v += a.dot(b.clone().cross(c));
+  }
+  return Math.abs(v)/6; /* mm^3 */
+}
+function partMass(p){ return geomVolume(p.mesh.geometry)/1000 * (MATERIALS[p.mat]||MATERIALS.steel).d; } /* grams */
 
 const DEFAULTS = {
   box:{w:40,h:40,d:40}, plate:{w:80,h:6,d:60},
@@ -485,21 +514,25 @@ function defaultY(type,p){
   if(type==='torus') return p.t;
   return (p.h!==undefined? p.h:40)/2;
 }
-function solidMat(hex){ return new THREE.MeshStandardMaterial({color:hex, metalness:.35, roughness:.45}); }
+function solidMat(hex, mat){
+  const m = MATERIALS[mat]||MATERIALS.steel;
+  return new THREE.MeshStandardMaterial({color: hex||m.c, metalness:m.m, roughness:m.r});
+}
 function cutterMat(){
   return new THREE.MeshStandardMaterial({color:0xff7a1a, transparent:true, opacity:.28, depthWrite:false, metalness:0, roughness:1});
 }
 
-function addPart({type,name,op,params,position,rotation,color}){
+function addPart({type,name,op,params,position,rotation,color,mat}){
   op = op==='cut' ? 'cut' : 'solid';
+  mat = MATERIALS[mat] ? mat : 'steel';
   const p = Object.assign({}, DEFAULTS[type]||DEFAULTS.box, params||{});
-  const mesh = new THREE.Mesh(buildGeom(type,p), op==='cut'? cutterMat() : solidMat(color||'#9aa4b5'));
+  const mesh = new THREE.Mesh(buildGeom(type,p), op==='cut'? cutterMat() : solidMat(color, mat));
   mesh.castShadow = mesh.receiveShadow = (op==='solid');
   const pos = position || [0, defaultY(type,p), 0];
   mesh.position.set(pos[0],pos[1],pos[2]);
   if(rotation) mesh.rotation.set(...rotation.map(d=>d*Math.PI/180));
   scene.add(mesh);
-  const part = {id:uid++, name:name||`${type}_${uid}`, type, op, params:p, mesh, color: op==='cut'?'#ff7a1a':(color||'#9aa4b5')};
+  const part = {id:uid++, name:name||`${type}_${uid}`, type, op, params:p, mesh, mat, color: op==='cut'?'#ff7a1a':(color||MATERIALS[mat].c)};
   mesh.userData.partId = part.id;
   mesh.visible = (op==='solid') || showGhosts;
   parts.push(part);
@@ -598,8 +631,9 @@ function refreshStats(){
     const g=p.mesh.geometry; tris += (g.index? g.index.count : g.attributes.position.count)/3;
   });
   const cuts = parts.filter(p=>p.op==='cut').length;
+  let mass=0; parts.filter(p=>p.op==='solid').forEach(p=>{ mass+=partMass(p); });
   document.getElementById('hudStats').textContent =
-    `solids ${parts.length-cuts} · cutters ${cuts} · tris ${Math.round(tris).toLocaleString()}`;
+    `solids ${parts.length-cuts} · cutters ${cuts} · tris ${Math.round(tris).toLocaleString()} · ${fmtM(mass)}`;
 }
 
 /* ============ inspector ============ */
@@ -633,8 +667,8 @@ function refreshInspector(){
       if(p.op===op) return;
       p.op = op;
       p.mesh.material.dispose();
-      p.mesh.material = op==='cut'? cutterMat() : solidMat(p.color==='#ff7a1a'?'#9aa4b5':p.color);
-      if(op==='cut') p.color='#ff7a1a'; else if(p.color==='#ff7a1a') p.color='#9aa4b5';
+      p.mesh.material = op==='cut'? cutterMat() : solidMat(p.color==='#ff7a1a'?null:p.color, p.mat);
+      if(op==='cut') p.color='#ff7a1a'; else if(p.color==='#ff7a1a') p.color=MATERIALS[p.mat].c;
       p.mesh.castShadow = p.mesh.receiveShadow = (op==='solid');
       p.mesh.visible = (op==='solid')||showGhosts;
       select(p); scheduleRecompute();
@@ -655,6 +689,17 @@ function refreshInspector(){
   });
   dimF.appendChild(dr); inspEl.appendChild(dimF);
 
+  const scF=document.createElement('div'); scF.className='fld';
+  scF.innerHTML='<label>Uniform scale ×</label>';
+  scF.appendChild(numInput(1, v=>{
+    if(v>0 && v!==1){
+      Object.keys(p.params).forEach(k=>p.params[k]=Math.round(p.params[k]*v*100)/100);
+      p.mesh.geometry.dispose(); p.mesh.geometry=buildGeom(p.type,p.params);
+      scheduleRecompute(); refreshInspector();
+    }
+  }));
+  inspEl.appendChild(scF);
+
   const posF=document.createElement('div'); posF.className='fld';
   posF.innerHTML='<label>Position X / Y / Z</label>';
   const pr=document.createElement('div'); pr.className='row3';
@@ -668,17 +713,46 @@ function refreshInspector(){
   rotF.appendChild(rr); inspEl.appendChild(rotF);
 
   if(p.op==='solid'){
+    const matF=document.createElement('div'); matF.className='fld';
+    matF.innerHTML='<label>Material</label>';
+    const sel=document.createElement('select'); sel.className='num';
+    Object.keys(MATERIALS).forEach(k=>{
+      const o=document.createElement('option'); o.value=k;
+      o.textContent = k.replace('_',' ') + '  ·  ' + MATERIALS[k].d + ' g/cm³';
+      if(k===p.mat) o.selected=true;
+      sel.appendChild(o);
+    });
+    sel.onchange=()=>{
+      p.mat=sel.value; p.color=MATERIALS[p.mat].c;
+      p.mesh.material.dispose(); p.mesh.material=solidMat(null,p.mat);
+      refreshTree(); refreshInspector(); refreshStats();
+    };
+    matF.appendChild(sel); inspEl.appendChild(matF);
+
     const colF=document.createElement('div'); colF.className='fld';
     colF.innerHTML='<label>Material color</label>';
     const ci=document.createElement('input'); ci.type='color'; ci.value=p.color;
     ci.oninput=()=>{ p.color=ci.value; p.mesh.material.color.set(ci.value); refreshTree(); };
     colF.appendChild(ci); inspEl.appendChild(colF);
+
+    const bb = new THREE.Box3().setFromObject(p.mesh);
+    const sz = bb.getSize(new THREE.Vector3());
+    const vol = geomVolume(p.mesh.geometry);
+    const propF=document.createElement('div'); propF.className='fld';
+    propF.innerHTML='<label>Mass properties</label>';
+    [`bbox ${fmtL(sz.x)} × ${fmtL(sz.y)} × ${fmtL(sz.z)}`,
+     `volume ${Math.round(vol/10)/100} cm³ · mass ${fmtM(vol/1000*MATERIALS[p.mat].d)}`
+    ].forEach(t=>{
+      const d=document.createElement('div'); d.className='meta'; d.style.paddingTop='0'; d.textContent=t;
+      propF.appendChild(d);
+    });
+    inspEl.appendChild(propF);
   }
 
   const act=document.createElement('div'); act.className='actions';
   const dup=document.createElement('button'); dup.className='btn'; dup.textContent='Duplicate';
   dup.onclick=()=>{
-    const np = addPart({type:p.type, name:p.name+'_copy', op:p.op, params:{...p.params},
+    const np = addPart({type:p.type, name:p.name+'_copy', op:p.op, mat:p.mat, params:{...p.params},
       position:[p.mesh.position.x+20,p.mesh.position.y,p.mesh.position.z+20],
       rotation:[p.mesh.rotation.x,p.mesh.rotation.y,p.mesh.rotation.z].map(r=>r*180/Math.PI),
       color:p.color});
@@ -731,7 +805,9 @@ Rules:
 - Units mm. Y up, ground y=0; geometry rests on the ground. Rotation in degrees, XYZ order.
 - op "cut" is true boolean subtraction from every solid it intersects: bores, bolt holes, slots, pockets. Cutters must extend 2mm+ beyond pierced faces.
 - Bolt clearance: M6 r=3.3, M8 r=4.5, M10 r=5.5. Realistic machined proportions.
-- Muted colors (#8a93a6 steel, #b8743a brass, #c0c5ce aluminum). 3-14 parts. Compact JSON.`;
+- Each solid may set "material": one of steel, stainless, aluminum, brass, copper, titanium, cast_iron, abs, pla, nylon, acrylic, oak — controls appearance AND density for mass properties. "color" is an optional hex override.
+- CURRENT_SCENE includes computed mass_g per solid (post-boolean, holes removed). Use it to answer weight/sizing questions in "reply", or to honor targets like "under 200 g".
+- 3-14 parts. Compact JSON.`;
 
 let chatHistory = [];
 const chatlog = document.getElementById('chatlog');
@@ -752,6 +828,7 @@ function sceneSnapshot(){
   return parts.map(p=>({type:p.type, op:p.op, name:p.name, params:p.params,
     position:[p.mesh.position.x,p.mesh.position.y,p.mesh.position.z].map(v=>Math.round(v*10)/10),
     rotation:[p.mesh.rotation.x,p.mesh.rotation.y,p.mesh.rotation.z].map(r=>Math.round(r*180/Math.PI)),
+    material:p.mat, mass_g: p.op==='solid'? Math.round(partMass(p)) : undefined,
     color:p.color}));
 }
 async function generate(){
@@ -785,7 +862,7 @@ async function generate(){
           const m = KEYMAP[k.toLowerCase()];
           if(m && !(m in sp.params)){ sp.params[m]=sp.params[k]; delete sp.params[k]; }
         }
-        made.push(addPart({type:sp.type, op:sp.op,
+        made.push(addPart({type:sp.type, op:sp.op, mat:sp.material||sp.mat,
           name:(sp.name||sp.type+'_'+i).replace(/\s+/g,'_').toLowerCase(),
           params:sp.params, position:sp.position, rotation:sp.rotation, color:sp.color}));
       });
@@ -866,10 +943,17 @@ const rst = document.createElement('button');
 rst.className='chatreset'; rst.textContent='reset chat';
 rst.onclick = resetChat;
 cmdMsg.parentNode.appendChild(rst);
+const ub = document.getElementById('unitBtn'), ubm = document.getElementById('unitBtnM');
+function toggleUnit(){
+  unit = unit==='mm' ? 'in' : 'mm';
+  ub.textContent = unit; ubm.textContent = unit;
+  refreshStats(); refreshInspector();
+}
+ub.onclick = toggleUnit; ubm.onclick = toggleUnit;
 
 /* starter: demo a real boolean — plate with bored boss and 4 bolt holes */
-addPart({type:'plate', name:'base_plate', params:{w:90,h:8,d:70}, position:[0,4,0], color:'#7e8aa0'});
-addPart({type:'cylinder', name:'boss', params:{r:16,h:30}, position:[0,8+15,0], color:'#9aa4b5'});
+addPart({type:'plate', name:'base_plate', mat:'cast_iron', params:{w:90,h:8,d:70}, position:[0,4,0]});
+addPart({type:'cylinder', name:'boss', mat:'steel', params:{r:16,h:30}, position:[0,8+15,0]});
 addPart({type:'cylinder', op:'cut', name:'bore', params:{r:7,h:50}, position:[0,22,0]});
 [[35,25],[ -35,25],[35,-25],[-35,-25]].forEach((xy,i)=>
   addPart({type:'cylinder', op:'cut', name:'bolt_hole_'+(i+1), params:{r:3.3,h:14}, position:[xy[0],4,xy[1]]}));
