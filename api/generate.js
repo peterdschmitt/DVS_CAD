@@ -1,10 +1,15 @@
-// Serverless proxy — supports OpenAI or Anthropic, whichever key is configured.
+// Conversational proxy — supports OpenAI or Anthropic, whichever key is configured.
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
-  const { prompt, system } = req.body || {};
-  if (!prompt || typeof prompt !== 'string' || prompt.length > 2000)
-    return res.status(400).json({ error: 'Invalid prompt' });
+  let { messages, prompt, system } = req.body || {};
+  if (!messages && prompt) messages = [{ role: 'user', content: prompt }];
+  if (!Array.isArray(messages) || !messages.length || messages.length > 24)
+    return res.status(400).json({ error: 'Invalid messages' });
+  for (const m of messages) {
+    if (!['user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || m.content.length > 10000)
+      return res.status(400).json({ error: 'Invalid message' });
+  }
 
   try {
     let text;
@@ -17,12 +22,9 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           model: 'gpt-4o',
-          max_tokens: 2000,
+          max_tokens: 2500,
           response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: system || '' },
-            { role: 'user', content: prompt },
-          ],
+          messages: [{ role: 'system', content: system || '' }, ...messages],
         }),
       });
       const data = await r.json();
@@ -38,16 +40,16 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-5',
-          max_tokens: 2000,
+          max_tokens: 2500,
           system: system || '',
-          messages: [{ role: 'user', content: prompt }],
+          messages,
         }),
       });
       const data = await r.json();
       if (data.error) return res.status(502).json({ error: data.error.message });
       text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
     } else {
-      return res.status(500).json({ error: 'No API key configured (OPENAI_API_KEY or ANTHROPIC_API_KEY)' });
+      return res.status(500).json({ error: 'No API key configured' });
     }
     return res.status(200).json({ text });
   } catch (e) {
