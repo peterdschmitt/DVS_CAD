@@ -660,8 +660,13 @@ async function generate(){
     const spec = JSON.parse(clean.slice(clean.indexOf('{')));
     if(!spec.parts || !spec.parts.length) throw new Error('No parts in response');
     const made=[];
+    const KEYMAP = {width:'w',height:'h',depth:'d',radius:'r',tube:'t',tube_radius:'t',length:'w'};
     spec.parts.slice(0,18).forEach((sp,i)=>{
       if(!DEFAULTS[sp.type]) sp.type='box';
+      if(sp.params) for(const k of Object.keys(sp.params)){
+        const m = KEYMAP[k.toLowerCase()];
+        if(m && !(m in sp.params)){ sp.params[m]=sp.params[k]; delete sp.params[k]; }
+      }
       made.push(addPart({
         type:sp.type, op:sp.op,
         name:(spec.name? spec.name.replace(/\s+/g,'_').toLowerCase()+'.':'') + (sp.name||sp.type+'_'+i).replace(/\s+/g,'_').toLowerCase(),
