@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>StudioXCAD</title>
+<title>DVS_CAD</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
   :root{
@@ -92,7 +92,7 @@
 <body>
 <div class="app">
   <div class="bar">
-    <div class="logo">Studio<b>X</b>CAD</div>
+    <div class="logo">DVS<b>_</b>CAD</div>
     <span class="tag">AI TEXT-TO-CAD · BOOLEAN ENGINE · mm · Y-UP</span>
     <div class="spacer"></div>
     <button class="btn toggle on" id="ghostBtn">Show cutters</button>
@@ -703,7 +703,7 @@ document.getElementById('stlBtn').onclick = ()=>{
   const solids = parts.filter(p=>p.op==='solid');
   if(!solids.length){ setMsg('Nothing to export.','err'); return; }
   recomputeAll();
-  let out='solid studioxcad\n';
+  let out='solid dvs_cad\n';
   const v=[new THREE.Vector3(),new THREE.Vector3(),new THREE.Vector3()];
   const n=new THREE.Vector3(), ab=new THREE.Vector3(), cb=new THREE.Vector3();
   solids.forEach(p=>{
@@ -721,12 +721,12 @@ document.getElementById('stlBtn').onclick = ()=>{
       out += '  endloop\n endfacet\n';
     }
   });
-  out += 'endsolid studioxcad\n';
+  out += 'endsolid dvs_cad\n';
   const blob = new Blob([out],{type:'model/stl'});
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download='studioxcad_export.stl'; a.click();
+  a.href = URL.createObjectURL(blob); a.download='dvs_cad_export.stl'; a.click();
   URL.revokeObjectURL(a.href);
-  setMsg('Exported studioxcad_export.stl','ok');
+  setMsg('Exported dvs_cad_export.stl','ok');
 };
 
 /* ============ resize + loop ============ */
