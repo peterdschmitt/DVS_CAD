@@ -60,15 +60,22 @@
   .hud b{color:var(--dim);font-weight:400}
   .axes{position:absolute;bottom:78px;right:14px;font-family:var(--mono);font-size:10px;color:var(--faint);pointer-events:none}
 
-  .cmd{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(680px,92%);}
-  .cmdbox{display:flex;align-items:center;gap:10px;background:rgba(22,24,28,.92);border:1px solid var(--line);border-radius:6px;padding:10px 14px;backdrop-filter:blur(6px);box-shadow:0 8px 30px rgba(0,0,0,.5)}
+  .cmd{position:fixed;top:44px;right:0;bottom:0;width:min(370px,88vw);z-index:40;
+    background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;
+    padding:12px;gap:10px;transform:translateX(105%);transition:transform .22s ease;
+    box-shadow:-10px 0 34px rgba(0,0,0,.5)}
+  .cmd.open{transform:translateX(0)}
+  .cmdhead{display:flex;align-items:center;justify-content:space-between}
+  .cmdhead h3{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .cmdclose{background:none;border:none;color:var(--dim);font-size:18px;line-height:1;cursor:pointer;padding:2px 6px}
+  .cmdclose:hover{color:var(--ink)}
+  .cmdbox{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 11px}
   .cmdbox:focus-within{border-color:var(--acc)}
   .cmdbox .gt{color:var(--acc);font-family:var(--mono);font-weight:700}
   .cmdbox input{flex:1;background:none;border:none;outline:none;color:var(--ink);font-family:var(--mono);font-size:13px}
   .cmdbox input::placeholder{color:var(--faint)}
   .cmdmsg{font-family:var(--mono);font-size:10px;margin-top:6px;padding-left:4px;min-height:14px;color:var(--dim)}
-  .chatlog{display:none;max-height:30vh;overflow-y:auto;margin-bottom:8px;background:rgba(22,24,28,.92);border:1px solid var(--line);border-radius:6px;padding:10px;backdrop-filter:blur(6px)}
-  .chatlog.show{display:block}
+  .chatlog{flex:1;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px}
   .msg{font-size:12px;line-height:1.5;margin-bottom:8px;max-width:92%}
   .msg.user{margin-left:auto;text-align:right;color:var(--ink)}
   .msg.user .who{color:var(--acc)}
@@ -110,11 +117,9 @@
     .menuBtn{display:inline-block;padding:6px 10px}
     .bar{gap:8px;padding:0 10px}
     .bar .tag{display:none}
-    .bar .btn:not(.menuBtn):not(.primary){display:none}
+    .bar .btn:not(.menuBtn):not(.primary):not(.aiBtn){display:none}
     .hud{font-size:9px;line-height:1.5}
     .axes{display:none}
-    .cmd{bottom:10px;width:94%}
-    .cmdbox{padding:8px 10px}
     .prim{padding:10px 4px}
     .node{padding:9px 8px}
     .mobileOnly{display:block}
@@ -131,6 +136,7 @@
     <button class="btn" id="unitBtn" title="Toggle units">mm</button>
     <button class="btn toggle on" id="ghostBtn">Show cutters</button>
     <button class="btn" id="clearBtn">Clear scene</button>
+    <button class="btn aiBtn" id="aiBtn">✦ AI</button>
     <button class="btn primary" id="stlBtn">Export STL</button>
     <button class="btn menuBtn" id="inspBtn" aria-label="Inspector panel">Edit</button>
   </div>
@@ -177,13 +183,14 @@
         <span id="hudStats">parts 0 · tris 0</span>
       </div>
       <div class="axes">X<span style="color:#e25555">—</span> Y<span style="color:#5fd38a">—</span> Z<span style="color:#5b9bd5">—</span></div>
-      <div class="cmd">
+      <div class="cmd" id="cmdPanel">
+        <div class="cmdhead"><h3>✦ AI Assistant</h3><button class="cmdclose" id="cmdClose" aria-label="Close">×</button></div>
         <div class="chatlog" id="chatlog"></div>
         <div class="cmdbox">
           <span class="gt">&gt;</span>
           <input id="cmdIn" placeholder="describe a part… e.g. a flanged bearing mount with four M6 bolt holes" autocomplete="off">
           <div class="spin" id="spin"></div>
-          <button class="btn primary" id="genBtn" style="padding:4px 12px;font-size:11px">Generate</button>
+          <button class="btn primary" id="genBtn" style="padding:4px 12px;font-size:11px">Send</button>
         </div>
         <div class="cmdmsg" id="cmdMsg"></div>
       </div>
@@ -812,7 +819,7 @@ Rules:
 let chatHistory = [];
 const chatlog = document.getElementById('chatlog');
 function addBubble(role, text){
-  chatlog.classList.add('show');
+
   const m = document.createElement('div');
   m.className = 'msg ' + (role==='user'?'user':'ai');
   m.innerHTML = `<span class="who">${role==='user'?'you':'dvs'}</span>`;
@@ -821,7 +828,7 @@ function addBubble(role, text){
   chatlog.scrollTop = chatlog.scrollHeight;
 }
 function resetChat(){
-  chatHistory = []; chatlog.innerHTML=''; chatlog.classList.remove('show');
+  chatHistory = []; chatlog.innerHTML=''; welcome();
   setMsg('New conversation.','');
 }
 function sceneSnapshot(){
@@ -950,6 +957,18 @@ function toggleUnit(){
   refreshStats(); refreshInspector();
 }
 ub.onclick = toggleUnit; ubm.onclick = toggleUnit;
+const cmdPanel = document.getElementById('cmdPanel');
+function toggleChat(open){
+  cmdPanel.classList.toggle('open', open===undefined ? undefined : open);
+  if(cmdPanel.classList.contains('open') && matchMedia('(min-width:769px)').matches) cmdIn.focus();
+}
+document.getElementById('aiBtn').onclick = ()=>toggleChat();
+document.getElementById('cmdClose').onclick = ()=>toggleChat(false);
+function welcome(){
+  addBubble('ai', "Describe a part and I'll build it — then iterate: 'make it taller', 'switch the boss to brass', 'how much does it weigh?'");
+}
+welcome();
+if(matchMedia('(min-width:769px)').matches) toggleChat(true);
 
 /* starter: demo a real boolean — plate with bored boss and 4 bolt holes */
 addPart({type:'plate', name:'base_plate', mat:'cast_iron', params:{w:90,h:8,d:70}, position:[0,4,0]});
